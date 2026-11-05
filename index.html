@@ -240,8 +240,8 @@ var S={view:'ringkasan',err:null,loaded:false,progress:0,total:0,lastSync:null,p
 /* ---------- Google Sheets I/O ---------- */
 function errText(e){
   var c=e&&e.code;
-  var m={needs_reauth:'Sambungan Google Sheets kedaluwarsa. Hubungkan ulang di Pengaturan → Konektor di claude.ai.',
-    server_not_connected:'Konektor Google Sheets belum terhubung di akun ini. Tambahkan di Pengaturan → Konektor di claude.ai.',
+  var m={needs_reauth:'Sambungan Google Sheets kedaluwarsa. Hubungkan ulang di Pengaturan → Konektor di Akun Admin.',
+    server_not_connected:'Konektor Google Sheets belum terhubung di akun ini. Tambahkan di Pengaturan → Konektor di Akun Admin.',
     not_in_manifest:'Akses ke Google Sheets tidak diizinkan untuk halaman ini. Atur lewat menu Permissions pada artifact.',
     approval_required:'Perubahan ini perlu persetujuan Anda. Ulangi lalu pilih Izinkan.',
     blocked_by_policy:'Kebijakan organisasi memblokir akses Google Sheets.',
@@ -251,7 +251,7 @@ function errText(e){
     unauthorized:'Kata sandi portal salah. Periksa lagi di Pengaturan.',
     network:'Tidak bisa menghubungi Web App Apps Script. Periksa alamat Web App dan koneksi internet.',
     bad_response:'Web App tidak mengembalikan data. Pastikan deployment diatur Execute as: Me dan Who has access: Anyone, lalu buat deployment versi baru.',
-    no_mcp:'Portal ini perlu tersambung ke Google Sheets lewat claude.ai. Buka halaman ini di claude.ai dengan akun yang punya konektor Google Sheets dan akses edit ke kedua spreadsheet.'};
+    no_mcp:'Portal ini perlu tersambung ke Google Sheets lewat Akun Admin. Buka halaman ini di Akun Admin dengan akun yang punya konektor Google Sheets dan akses edit ke kedua spreadsheet.'};
   if(m[c])return m[c];
   if(c==='tool_error')return 'Google Sheets menolak permintaan: '+String(e.message||'').slice(0,160);
   return 'Gagal menghubungi Google Sheets ('+(c||'error')+').';
@@ -373,14 +373,15 @@ function loadOne(job){
 function jobs(){
   var j=[
     {ss:SS_MNT,sheet:'Jadwal Mingguan',apply:function(v,e){S.mgg=e?{error:errText(e)}:parseMgg(v);if(S.mgg&&S.mgg.weeks)S.prev.week=curWeek(S.mgg.weeks)}},
-    {ss:SS_MNT,sheet:'Unit Rusak',apply:function(v,e){S.rusak=e?{error:errText(e)}:parseRusak(v)}}
+    {ss:SS_MNT,sheet:'Unit Rusak',apply:function(v,e){S.rusak=e?{error:errText(e)}:parseRusak(v)}},
+    {ss:SS_CHK,sheet:'Inventaris',apply:function(v,e){S.tbl.inv=e?{error:errText(e)}:parseTable(v,SS_CHK,'Inventaris')}}
   ];
   CHK_SHEETS.forEach(function(n){j.push({ss:SS_CHK,sheet:n,apply:function(v,e){S.chk[n]=e?{name:n,error:errText(e)}:parseCheck(v,n)}})});
   return j;
 }
 function curWeek(weeks){var t=today0(),idx=0;weeks.forEach(function(w,i){var d=parseDM(w);if(d&&d<=t)idx=i});return idx}
 function loadAll(){
-  S.err=null;S.loaded=false;S.progress=0;S.total=13;setSync();render();
+  S.err=null;S.loaded=false;S.progress=0;S.total=14;setSync();render();
   var first={ss:SS_MNT,sheet:'Jadwal Bulanan'};
   readSheet(first.ss,first.sheet).then(function(v){
     S.bul=parseBul(v);S.progress++;setSync();
@@ -424,7 +425,7 @@ function render(){
   var v=$('#view');
   document.querySelectorAll('nav a').forEach(function(a){a.setAttribute('aria-current',a.getAttribute('data-v')===S.view?'page':'false')});
   if(S.err){v.innerHTML='<section class="panel err"><h2>Portal belum tersambung ke Google Sheets</h2><p>'+(S.err.code==='setup'?'Isi alamat Web App dan kata sandi dari Apps Script (langkahnya ada di README).':esc(errText(S.err)))+'</p></section><section class="panel"><h2>Pengaturan koneksi</h2><form id="cfgForm"><label class="lbl" for="cfgUrl">Alamat Web App (Apps Script)</label><input class="field" style="width:100%" id="cfgUrl" value="'+esc(CFG.url)+'" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off"><label class="lbl" for="cfgTok">Kata sandi portal</label><input class="field" style="width:100%" id="cfgTok" type="password" value="'+esc(CFG.token)+'" autocomplete="off"><div class="actions"><button class="btn pri" type="submit">Simpan dan sambungkan</button></div></form></section>';return}
-  if(!S.loaded){v.innerHTML='<section class="panel"><h2>Memuat data</h2><p class="muted">Membaca '+S.total+' lembar dari dua spreadsheet. Pertama kali, claude.ai akan meminta izin akses Google Sheets.</p></section>';return}
+  if(!S.loaded){v.innerHTML='<section class="panel"><h2>Memuat data</h2><p class="muted">Membaca '+S.total+' lembar dari dua spreadsheet. Pertama kali akan meminta izin akses Google Sheets.</p></section>';return}
   ({ringkasan:vRingkasan,pengecekan:vChk,preventive:vPrev,aset:vAset,rusak:vRusak})[S.view](v);
 }
 
@@ -446,13 +447,39 @@ function donutSvg(parts,total,center,sub){
   return s;
 }
 function vRingkasan(v){
-  var tot=0,done=0,hasX=0,bad=0,per=[],agg={ok:0,issue:0,bad:0,partial:0,none:0};
+  // Total otoritatif: jumlah aset bernomor pada sheet Inventaris.
+  // Data form pengecekan hanya digunakan untuk menentukan status tiap aset.
+  var inv=S.tbl.inv&&!S.tbl.inv.error?S.tbl.inv:null;
+  var assetRows=inv?inv.rows.filter(function(r){return /^\d+$/.test(String(r.cells[0]||'').trim())}):[];
+  var invCol=inv?inv.hdr.findIndex(function(h){return /^no\.?\s*inventaris$/i.test(String(h||'').trim())}):-1;
+  var byAsset={}, agg={ok:0,issue:0,bad:0,partial:0,none:0};
+  var tot=assetRows.length,done=0,hasX=0,bad=0,per=[];
+  function idKey(v){return String(v||'').trim().toUpperCase().replace(/\s+/g,'')}
   CHK_SHEETS.forEach(function(n){
     var sh=S.chk[n];if(!sh||sh.error){per.push({n:n,err:sh&&sh.error});return}
     var c={ok:0,issue:0,bad:0,partial:0,none:0};
-    sh.rows.forEach(function(r){var k=rowStat(sh,r);c[k]++;agg[k]++;if(rowCount(r).x>0)hasX++});
-    var t=sh.rows.length;tot+=t;done+=t-c.none;bad+=c.bad;per.push({n:n,c:c,t:t});
+    sh.rows.forEach(function(r){
+      var k=rowStat(sh,r);c[k]++;
+      var key=idKey(r.inv);if(!key)return;
+      var old=byAsset[key],filled=rowCount(r).f;
+      if(!old||filled>old.filled||(filled===old.filled&&rowCount(r).x>old.x))
+        byAsset[key]={k:k,filled:filled,x:rowCount(r).x};
+    });
+    per.push({n:n,c:c,t:sh.rows.length});
   });
+  assetRows.forEach(function(r){
+    var key=invCol>=0?idKey(r.cells[invCol]):'';
+    var st=key?byAsset[key]:null,k=st?st.k:'none';
+    agg[k]++;if(k!=='none')done++;
+    if(st&&st.x>0)hasX++;
+    if(k==='bad')bad++;
+  });
+  // Jika sheet Inventaris gagal diakses, tampilkan kegagalan, jangan mengganti
+  // total resmi dengan jumlah baris form pengecekan secara diam-diam.
+  if(!inv){
+    v.innerHTML='<section class="panel err"><h2>Data Inventaris belum tersedia</h2><p>'+esc(S.tbl.inv&&S.tbl.inv.error||'Gagal memuat sheet Inventaris.')+' Total aset pada Ringkasan tidak dapat dihitung sebelum sheet Inventaris tersambung.</p></section>';
+    return;
+  }
   var bul=S.bul&&!S.bul.error?S.bul:null,m=S.prev.month,sel=0,tun=0,late=[],months=[];
   if(bul){
     for(var i=0;i<12;i++){var s=0,tn=0;bul.rows.forEach(function(r){if(r.real[i]==='Selesai')s++;else if(r.real[i]==='Ditunda')tn++});months.push({s:s,t:tn,n:bul.rows.length})}
@@ -466,12 +493,12 @@ function vRingkasan(v){
   var h='<section class="hero"><div class="hero-main"><div><h2>Ringkasan hari ini</h2><div class="date">'+esc(dateTxt)+'</div></div><div class="rings">'+
     '<div class="ring">'+ringSvg(pctChk,'Perangkat sudah dicek')+'<span>Perangkat sudah dicek<br>'+done+' dari '+tot+' unit</span></div>'+
     '<div class="ring">'+ringSvg(pct,'Preventive '+MONFULL[m])+'<span>Preventive '+MONFULL[m]+'<br>'+sel+' dari '+(bul?bul.rows.length:0)+' unit</span></div></div></div>'+
-    '<div class="tiles"><div class="tile t-ok"><b>'+tot+'</b><span>perangkat di form pengecekan</span></div>'+
+    '<div class="tiles"><div class="tile t-ok"><b>'+tot+'</b><span>total aset pada Inventaris</span></div>'+
     '<div class="tile t-issue"><b>'+hasX+'</b><span>punya indikator Buruk</span></div>'+
     '<div class="tile t-bad"><b>'+bad+'</b><span>perlu perbaikan</span></div>'+
     '<div class="tile t-bad"><b>'+rus.length+'</b><span>unit rusak belum selesai</span></div></div></section>';
   var parts=[{l:'Baik',v:agg.ok,c:'var(--ok)'},{l:'Ada Buruk',v:agg.issue,c:'var(--issue)'},{l:'Perlu Perbaikan',v:agg.bad,c:'var(--bad)'},{l:'Belum Lengkap',v:agg.partial,c:'var(--partial)'},{l:'Belum Dicek',v:agg.none,c:'var(--none)'}];
-  h+='<div class="two"><section class="panel"><h2>Kondisi seluruh perangkat <small>'+tot+' unit</small></h2><div class="donutbox">'+donutSvg(parts,tot,tot,'unit')+'<div class="dl">'+
+  h+='<div class="two"><section class="panel"><h2>Kondisi aset terdaftar <small>'+tot+' unit</small></h2><div class="donutbox">'+donutSvg(parts,tot,tot,'unit')+'<div class="dl">'+
     parts.map(function(p){return '<div><span><i style="--c:'+p.c+'"></i>'+p.l+'</span><b class="num">'+p.v+'</b></div>'}).join('')+'</div></div></section>';
   h+='<section class="panel"><h2>Realisasi preventive bulanan 2026 <small>'+(bul?bul.rows.length+' unit terjadwal':'')+'</small></h2>';
   if(bul){
@@ -482,7 +509,7 @@ function vRingkasan(v){
     h+='<p class="muted" style="margin:12px 0 0">'+MONFULL[m]+': '+sel+' selesai, '+tun+' ditunda, '+(bul.rows.length-sel-tun)+' belum dari '+bul.rows.length+' unit.</p>';
   }else h+='<p class="muted">'+esc(S.bul&&S.bul.error||'Data belum tersedia')+'</p>';
   h+='</section></div>';
-  h+='<div class="two"><section class="panel"><h2>Kondisi per jenis perangkat <small>klik baris untuk membuka</small></h2>';
+  h+='<div class="two"><section class="panel"><h2>Kondisi per jenis perangkat <small>jumlah entri form pengecekan · klik untuk membuka</small></h2>';
   per.forEach(function(p){
     if(p.err||!p.c){h+='<div class="rowbar"><span class="n">'+esc(shortName(p.n))+'</span><span class="muted">'+esc(p.err||'Tidak terbaca')+'</span><span></span></div>';return}
     var seg='';['ok','issue','bad','partial','none'].forEach(function(k){if(p.c[k])seg+='<i class="s-'+k+'" style="width:'+(p.c[k]/p.t*100)+'%" title="'+STAT[k]+': '+p.c[k]+'"></i>'});
