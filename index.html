@@ -263,9 +263,12 @@ function valuesOf(r){
   try{var t=r.content&&r.content[0]&&r.content[0].text;if(t){var j2=JSON.parse(t);if(j2&&j2.values)return j2.values}}catch(e2){}
   return [];
 }
-var CFG={url:'',token:''};
-try{CFG.url=localStorage.getItem('ptpn_api_url')||'';CFG.token=localStorage.getItem('ptpn_api_token')||''}catch(e){}
-if(!CFG.url&&window.PORTAL_CONFIG&&window.PORTAL_CONFIG.apiUrl)CFG.url=window.PORTAL_CONFIG.apiUrl;
+// Konfigurasi awal otomatis: pengguna tidak perlu memasukkan URL atau token.
+// Perhatian: token yang tertulis di HTML dapat dibaca oleh siapa pun yang memperoleh file.
+var CFG={
+  url:'https://script.google.com/macros/s/AKfycbwt6yyLpSoVeaeFrwa0h9Hked081sPAzNM4Jsd0SURhMc-9CeKh2KLbWc6eHXENHqnvVQ/exec',
+  token:'it123'
+};
 function apiErr(code,msg){return {code:code,message:msg||''}}
 function api(method,payload){
   var url=CFG.url,opts;
